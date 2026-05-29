@@ -1,0 +1,12 @@
+numpy==2.1.1
+pandas==2.2.3
+scikit-learn==1.5.2
+imbalanced-learn==0.12.4
+joblib==1.4.2
+matplotlib==3.9.2
+cyvcf2==0.31.1
+pyyaml==6.0.2
+Conda==25.11.1
+Snippy==4.3.6
+Plink==2
+Python==3.14,3.10

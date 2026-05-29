@@ -1,0 +1,178 @@
+Snippy:
+%%bash
+set -x
+
+# First check the size of your full FASTQ files
+echo "=== Full dataset file sizes ==="
+ls -lh /home/bio/LA_160.fastaq*.fastq
+wc -l /home/bio/LA_160.fastaq*.fastq
+
+# Clean up any existing results
+rm -rf snippy_results/SRR2939269_full
+mkdir -p snippy_results
+
+# Run Snippy on full dataset with conservative settings
+echo "Running Snippy on full SRR2939269 dataset..."
+echo "Started at: $(date)"
+
+timeout 1800s /usr/local/envs/snippy_env/bin/snippy \
+  --cpus 2 \
+  --ram 4 \
+  --outdir "snippy_results/SRR2939269_full" \
+  --ref "/content/reference.fna" \
+  --R1 "/content/fastq_data/SRR2939269_1.fastq" \
+  --R2 "/content/fastq_data/SRR2939269_2.fastq" \
+  --force
+
+exit_status=$?
+echo "Finished at: $(date)"
+echo "Exit status: $exit_status"
+
+if [ $exit_status -eq 124 ]; then
+    echo "Command timed out after 30 minutes"
+elif [ $exit_status -ne 0 ]; then
+    echo "Command failed with exit status $exit_status"
+    echo "Checking log file..."
+    cat snippy_results/SRR2939269_full/snps.log 2>/dev/null || echo "No log file found"
+else
+    echo "Command completed successfully!"
+    echo "Results:"
+    ls -la snippy_results/SRR2939269_full/
+
+    echo "=== Variant Summary ==="
+    grep -v "^#" snippy_results/SRR2939269_full/snps.vcf | wc -l
+    echo "Total variants found"
+
+    echo "=== First few variants ==="
+    grep -v "^#" snippy_results/SRR2939269_full/snps.vcf | head -5
+fi
+# Define the samples to process
+samples=("SRR2939360" "SRR2939270" "SRR2939269" "SRR2939272" "SRR2939333" "SRR2939378" "SRR2939393" "SRR2939397" "SRR2939416" "SRR2939422")
+
+echo "=== Processing ${#samples[@]} samples with Snippy ==="
+echo "Samples: ${samples[*]}"
+
+# Check if all FASTQ files exist first
+echo "=== Checking if all FASTQ files exist ==="
+missing_files=0
+for sample in "${samples[@]}"; do
+    r1="/content/fastq_data/${sample}_1.fastq"
+    r2="/content/fastq_data/${sample}_2.fastq"
+
+    if [ ! -f "$r1" ]; then
+        echo "ERROR: Missing file $r1"
+        missing_files=$((missing_files + 1))
+    fi
+    if [ ! -f "$r2" ]; then
+        echo "ERROR: Missing file $r2"
+        missing_files=$((missing_files + 1))
+    fi
+
+    if [ -f "$r1" ] && [ -f "$r2" ]; then
+        echo "✓ $sample: Files found"
+        ls -lh "$r1" "$r2"
+    fi
+done
+
+if [ $missing_files -gt 0 ]; then
+    echo "ERROR: $missing_files files are missing. Please check your fastq_data directory."
+    exit 1
+fi
+
+# Process each sample
+overall_start=$(date)
+echo "Started processing all samples at: $overall_start"
+
+for sample in "${samples[@]}"; do
+    echo ""
+    echo "=== Processing sample: $sample ==="
+    sample_start=$(date)
+    echo "Started $sample at: $sample_start"
+
+    # Define file paths
+    r1="/content/fastq_data/${sample}_1.fastq"
+    r2="/content/fastq_data/${sample}_2.fastq"
+    outdir="snippy_results/${sample}"
+
+    # Clean up any existing results for this sample
+    rm -rf "$outdir"
+
+    # Run Snippy with the same settings that worked for the full dataset
+    timeout 1800s /usr/local/envs/snippy_env/bin/snippy \
+        --cpus 2 \
+        --ram 4 \
+        --outdir "$outdir" \
+        --ref "/content/reference.fna" \
+        --R1 "$r1" \
+        --R2 "$r2" \
+        --force
+
+    exit_status=$?
+    sample_end=$(date)
+    echo "Finished $sample at: $sample_end"
+
+    # Check results for this sample
+    if [ $exit_status -eq 124 ]; then
+        echo "⚠️  $sample: Timed out after 30 minutes"
+    elif [ $exit_status -ne 0 ]; then
+        echo "❌ $sample: Failed with exit status $exit_status"
+        if [ -f "$outdir/snps.log" ]; then
+            echo "Last few lines of log:"
+            tail -10 "$outdir/snps.log"
+        fi
+    else
+        echo "✅ $sample: Completed successfully!"
+
+        # Count variants
+        if [ -f "$outdir/snps.vcf" ]; then
+            variant_count=$(grep -v "^#" "$outdir/snps.vcf" | wc -l)
+            echo "   Variants found: $variant_count"
+
+            # Show summary
+            if [ -f "$outdir/snps.txt" ]; then
+                echo "   Summary:"
+                cat "$outdir/snps.txt" | sed 's/^/   /'
+            fi
+        fi
+    fi
+done
+
+echo ""
+echo "=== FINAL SUMMARY ==="
+overall_end=$(date)
+echo "Started all samples at: $overall_start"
+echo "Finished all samples at: $overall_end"
+
+echo ""
+echo "Results overview:"
+for sample in "${samples[@]}"; do
+    outdir="snippy_results/${sample}"
+    if [ -d "$outdir" ]; then
+        if [ -f "$outdir/snps.vcf" ]; then
+            variant_count=$(grep -v "^#" "$outdir/snps.vcf" | wc -l)
+            echo "$sample: $variant_count variants"
+        else
+            echo "$sample: No VCF file (failed)"
+        fi
+    else
+        echo "$sample: No output directory (failed)"
+    fi
+done
+
+echo ""
+echo "Output directories created:"
+ls -la snippy_results/
+Snippy-core:
+mkdir -p /content/snippy_core
+/usr/local/envs/snippy_env/bin/snippy-core \
+  --ref /content/reference.fna \
+  --prefix /content/snippy_core/core \
+  $(find /content/snippy_results -maxdepth 1 -type d -name "SRR*" | grep -v "_full")
+Epistasis using Plink tool:
+plink --bfile /home/tobia/phenotypes.txt \
+      --epistasis \
+      --epi1 1e-5 \
+      --epi2 1e-5 \
+      --allow-no-sex \
+      --adjust \
+      --out /home/tobia/snp_snp_results
